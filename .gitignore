@@ -1,0 +1,15 @@
+config.json
+output/
+uploader.db
+uploader.db-*
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+ms-playwright/
+campkins-uploader.zip
+campkins-uploader/
+.claude/settings.local.json
+input_format.xlsx

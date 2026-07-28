@@ -1,0 +1,18 @@
+{
+  "site_url": "https://www.campkinscameras.com",
+  "wp_user": "",
+  "wp_app_password": "",
+  "woo_key": "",
+  "woo_secret": "",
+  "output_root": "",
+  "llm_api_key": "",
+  "llm_model": "",
+  "llm_system_prompt": "",
+  "seo_title_key": "",
+  "seo_desc_key": "",
+  "store_weight_unit": "kg",
+  "store_dimension_unit": "cm",
+  "max_dimension": 1600,
+  "webp_quality": 82,
+  "request_timeout": 45
+}

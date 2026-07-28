@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Start-Sleep *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-Content *)"
+    ]
+  }
+}

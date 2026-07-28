@@ -1,0 +1,28 @@
+# PyInstaller version resource. This is what Task Manager, file properties
+# and antivirus heuristics read, so the fields matter more than they look.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 0, 0, 0),
+    prodvers=(1, 0, 0, 0),
+    mask=0x3F,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0),
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable('080904B0', [
+        StringStruct('CompanyName', 'Campkins Cameras'),
+        StringStruct('FileDescription', 'Campkins Batch Uploader'),
+        StringStruct('FileVersion', '1.0.0.0'),
+        StringStruct('InternalName', 'CampkinsBatchUploader'),
+        StringStruct('OriginalFilename', 'CampkinsBatchUploader.exe'),
+        StringStruct('ProductName', 'Campkins Batch Uploader'),
+        StringStruct('ProductVersion', '1.0.0.0'),
+      ]),
+    ]),
+    VarFileInfo([VarStruct('Translation', [2057, 1200])]),
+  ],
+)

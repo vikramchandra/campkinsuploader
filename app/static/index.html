@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campkins Batch Uploader</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="bar">
+  <div>
+    <h1 class="bar__title">Campkins Batch Uploader</h1>
+    <p class="bar__sub mono" id="site-label">Loading…</p>
+  </div>
+  <div class="bar__actions">
+    <span class="dot" id="conn-dot" title="Connection status"></span>
+    <button class="btn btn--ghost" id="nav-conn">Test connection</button>
+    <button class="btn btn--ghost" id="nav-home">Runs</button>
+    <button class="btn btn--ghost" id="nav-settings">Settings</button>
+  </div>
+</header>
+
+<main class="sheet">
+
+  <!-- Home: new run + recent runs -->
+  <section class="screen" id="screen-home">
+    <div class="panel">
+      <div class="panel__head">
+        <h2>New run</h2>
+      </div>
+      <p class="hint">Upload a CSV or Excel sheet. Needed: Product Name and
+        Manufacturer URL. Also read if present: SKU, Price, EAN, Brand,
+        Categories, Weight, Dimensions, Description, URL Slug, Meta title,
+        Meta description. Header names are matched loosely.</p>
+      <div class="row">
+        <input type="file" id="sheet-file" accept=".csv,.xlsx"
+               class="field field--grow">
+        <button class="btn btn--primary" id="start-run">Start run</button>
+      </div>
+      <div class="problems is-hidden" id="sheet-problems"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel__head">
+        <h2>Recent runs</h2>
+      </div>
+      <div id="runs-list"><p class="muted">No runs yet.</p></div>
+    </div>
+  </section>
+
+  <!-- Run overview -->
+  <section class="screen is-hidden" id="screen-run">
+    <div class="panel">
+      <div class="panel__head">
+        <div>
+          <h2 id="run-title">Run</h2>
+          <p class="hint mono" id="run-dir"></p>
+        </div>
+        <div class="panel__actions">
+          <span class="muted" id="run-progress"></span>
+          <button class="btn btn--primary is-hidden" id="upload-ready-btn">
+            Upload all ready</button>
+          <button class="btn btn--ghost" id="run-back">All runs</button>
+        </div>
+      </div>
+      <div class="problems is-hidden" id="run-problems"></div>
+      <div class="log is-hidden" id="batch-log"></div>
+      <table class="rows-table">
+        <thead>
+          <tr><th>#</th><th>Product</th><th>Status</th><th>Images</th>
+              <th class="rows-table__actions">Actions</th></tr>
+        </thead>
+        <tbody id="run-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Per-product review -->
+  <section class="screen is-hidden" id="screen-review">
+    <div class="panel">
+      <div class="panel__head">
+        <div>
+          <p class="eyebrow" id="review-counter">Product</p>
+          <h2 id="review-name"></h2>
+          <p class="hint mono" id="review-url"></p>
+        </div>
+        <div class="panel__actions">
+          <button class="btn btn--ghost" id="review-prev">&larr; Previous</button>
+          <button class="btn btn--ghost" id="review-next">Next &rarr;</button>
+          <button class="btn btn--ghost" id="review-back">Run overview</button>
+        </div>
+      </div>
+
+      <div class="row row--controls">
+        <label class="lbl">Filename string
+          <input class="field" id="suffix" placeholder="e.g. black, kit, mk2">
+        </label>
+        <p class="hint" id="filename-preview"></p>
+        <span class="spacer"></span>
+        <span class="muted" id="kept-count"></span>
+        <button class="btn btn--ghost" id="drop-all">Drop all</button>
+      </div>
+
+      <p class="hint">Click an image to keep or drop it. Kept images are
+        numbered in the order you pick them. Choose one as the thumbnail.</p>
+      <div class="frames" id="review-grid"></div>
+      <p class="hint is-hidden" id="review-failures"></p>
+    </div>
+
+    <div class="panel">
+      <div class="panel__head"><h2>Description</h2></div>
+      <div class="desc">
+        <div class="desc__editor">
+          <div class="desc__toolbar">
+            <button class="btn btn--tool" data-cmd="bold"><b>B</b></button>
+            <button class="btn btn--tool" data-cmd="italic"><i>I</i></button>
+            <button class="btn btn--tool" data-cmd="insertUnorderedList">&bull; List</button>
+          </div>
+          <div class="editor" id="editor" contenteditable="true"></div>
+        </div>
+        <aside class="desc__extracted">
+          <p class="eyebrow">Extracted from the page</p>
+          <div id="extracted-panel"></div>
+        </aside>
+      </div>
+      <div class="row row--end">
+        <button class="btn" id="save-selection">Save</button>
+        <button class="btn btn--primary" id="save-continue">Save &amp; continue</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Confirmation -->
+  <section class="screen is-hidden" id="screen-confirm">
+    <div class="panel">
+      <div class="panel__head">
+        <div>
+          <p class="eyebrow" id="confirm-counter">Confirm</p>
+          <h2 id="confirm-name-label"></h2>
+        </div>
+        <div class="panel__actions">
+          <button class="btn btn--ghost" id="confirm-back">Back to review</button>
+        </div>
+      </div>
+
+      <div class="grid-form">
+        <label class="lbl">Product name
+          <input class="field" id="confirm-name"></label>
+        <label class="lbl">Slug
+          <input class="field mono" id="confirm-slug"></label>
+        <label class="lbl">SKU
+          <input class="field mono" id="confirm-sku"></label>
+        <label class="lbl">Price (&pound;)
+          <input class="field mono" id="confirm-price"></label>
+        <label class="lbl">EAN
+          <input class="field mono" id="confirm-ean"></label>
+        <label class="lbl">Brand
+          <input class="field" id="confirm-brand"></label>
+        <label class="lbl">Categories <span class="muted">(comma separated)</span>
+          <input class="field" id="confirm-categories"></label>
+        <label class="lbl">Weight (g)
+          <input class="field mono" id="confirm-weight"></label>
+        <label class="lbl">Dimensions (mm, LxWxH)
+          <input class="field mono" id="confirm-dimensions"></label>
+      </div>
+      <p class="hint">Brand and categories must already exist on the site;
+        unknown names are left off the product, not created.</p>
+
+      <p class="eyebrow">Gallery</p>
+      <div class="confirm-thumbs" id="confirm-thumbs"></div>
+
+      <p class="eyebrow">Description</p>
+      <div class="desc-preview" id="confirm-desc"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel__head">
+        <h2>SEO meta</h2>
+        <div class="panel__actions">
+          <button class="btn" id="gen-meta">Generate with AI</button>
+        </div>
+      </div>
+      <label class="lbl lbl--wide">Meta title
+        <input class="field" id="meta-title" maxlength="120">
+        <span class="counter" id="meta-title-count"></span>
+      </label>
+      <label class="lbl lbl--wide">Meta description
+        <textarea class="field" id="meta-desc" rows="3" maxlength="300"></textarea>
+        <span class="counter" id="meta-desc-count"></span>
+      </label>
+    </div>
+
+    <div class="panel">
+      <div class="panel__head"><h2>Upload</h2></div>
+      <div class="row">
+        <button class="btn btn--primary btn--send" id="upload-btn">
+          Upload to Campkins</button>
+        <button class="btn" id="ready-btn">Mark ready to upload</button>
+        <span class="muted">Created as a draft. Nothing is published.
+          Marked products upload together from the run overview.</span>
+      </div>
+      <div class="exists is-hidden" id="exists-box">
+        <p id="exists-text"></p>
+        <div class="row">
+          <button class="btn" id="exists-skip">Skip this product</button>
+          <a class="btn" id="exists-open" target="_blank" rel="noopener">
+            Open in WP admin</a>
+          <button class="btn" id="exists-replace">Replace its images</button>
+        </div>
+      </div>
+      <div class="log is-hidden" id="upload-log"></div>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section class="screen is-hidden" id="screen-settings">
+    <div class="panel">
+      <div class="panel__head"><h2>Site</h2></div>
+      <div class="grid-form">
+        <label class="lbl">Site URL
+          <input class="field mono" id="s-site_url"
+                 placeholder="https://www.campkinscameras.com"></label>
+        <label class="lbl">WordPress user
+          <input class="field" id="s-wp_user"></label>
+        <label class="lbl">WordPress application password
+          <input class="field mono" id="s-wp_app_password"
+                 placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"></label>
+        <label class="lbl">WooCommerce key
+          <input class="field mono" id="s-woo_key" placeholder="ck_…"></label>
+        <label class="lbl">WooCommerce secret
+          <input class="field mono" id="s-woo_secret" placeholder="cs_…"></label>
+        <label class="lbl">Output folder
+          <input class="field mono" id="s-output_root"
+                 placeholder="C:\CampkinsUploads"></label>
+      </div>
+      <p class="hint">The application password uploads images; the
+        WooCommerce keys create products. They are not interchangeable.
+        Each run is stored in a timestamped folder inside the output folder.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel__head"><h2>Store units</h2></div>
+      <div class="grid-form">
+        <label class="lbl">Store weight unit
+          <select class="field" id="s-store_weight_unit">
+            <option value="kg">kg</option>
+            <option value="g">g</option>
+            <option value="lbs">lbs</option>
+            <option value="oz">oz</option>
+          </select></label>
+        <label class="lbl">Store dimension unit
+          <select class="field" id="s-store_dimension_unit">
+            <option value="cm">cm</option>
+            <option value="m">m</option>
+            <option value="mm">mm</option>
+            <option value="in">in</option>
+            <option value="yd">yd</option>
+          </select></label>
+      </div>
+      <p class="hint">The units the site is set to under WooCommerce &gt;
+        Settings &gt; Products. The sheet always uses grams and millimetres;
+        uploads convert to these units.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel__head"><h2>SEO meta keys</h2></div>
+      <div class="grid-form">
+        <label class="lbl">Meta title key
+          <input class="field mono" id="s-seo_title_key"
+                 placeholder="_yoast_wpseo_title"></label>
+        <label class="lbl">Meta description key
+          <input class="field mono" id="s-seo_desc_key"
+                 placeholder="_yoast_wpseo_metadesc"></label>
+      </div>
+      <p class="hint">Depends on the site's SEO plugin. Yoast:
+        <span class="mono">_yoast_wpseo_title</span> and
+        <span class="mono">_yoast_wpseo_metadesc</span>. Rank Math:
+        <span class="mono">rank_math_title</span> and
+        <span class="mono">rank_math_description</span>. Check under
+        Plugins in WP admin. Leave blank to skip writing meta.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel__head"><h2>AI</h2></div>
+      <div class="grid-form">
+        <label class="lbl">OpenRouter API key
+          <input class="field mono" id="s-llm_api_key"
+                 placeholder="sk-or-…"></label>
+        <label class="lbl">Model <span class="muted">(blank for default)</span>
+          <input class="field mono" id="s-llm_model"></label>
+      </div>
+      <p class="hint">Meta generation goes through OpenRouter. Create a key
+        at openrouter.ai/keys. The model field takes any OpenRouter model id,
+        such as <span class="mono">anthropic/claude-sonnet-4.5</span>.</p>
+      <label class="lbl lbl--wide">System prompt
+        <textarea class="field mono" id="s-llm_system_prompt" rows="8"></textarea>
+      </label>
+    </div>
+
+    <div class="panel panel--flush">
+      <div class="row row--end">
+        <input type="file" id="settings-file" accept=".json" class="is-hidden">
+        <button class="btn btn--ghost" id="settings-import">
+          Upload settings JSON</button>
+        <button class="btn btn--ghost" id="settings-export">
+          Download settings JSON</button>
+        <button class="btn" id="settings-test">Test connection</button>
+        <button class="btn btn--primary" id="settings-save">Save settings</button>
+      </div>
+      <p class="hint">The JSON file holds every setting on this screen,
+        passwords and keys included. Keep it private.</p>
+      <div class="log is-hidden" id="settings-log"></div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast is-hidden" id="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
