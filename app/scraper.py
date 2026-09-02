@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import json
 import re
+from html import escape as html_escape
 from urllib.parse import urljoin
 
 from playwright.async_api import BrowserContext, async_playwright
 from selectolax.parser import HTMLParser
 
 from .config import SETTINGS
+from .sanitise import SCRAPE_REMAP, sanitise_html, text_only
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -222,7 +224,11 @@ def extract_description(html: str) -> dict[str, str]:
         if node:
             meta = (node.attributes.get("content") or "").strip()
 
-    main_block = ""
+    # The main block is kept as HTML, not flattened to text: the headings
+    # and bullet lists in a manufacturer's Features and Specifications
+    # sections are what the product page needs to keep. Length decisions
+    # are still made on the text, since markup inflates the count.
+    main_text, main_html = "", ""
     for selector in DESCRIPTION_SELECTORS:
         for candidate in tree.css(selector):
             text = candidate.text(separator="\n", strip=True)
@@ -230,17 +236,16 @@ def extract_description(html: str) -> dict[str, str]:
             # product copy; matching it would drag in menus and footers.
             if len(text) > 20000:
                 continue
-            if len(text) > len(main_block):
-                main_block = text
-        if len(main_block) > 200:
+            if len(text) > len(main_text):
+                main_text, main_html = text, candidate.html or ""
+        if len(main_text) > 200:
             break
-    if len(main_block) < 200:
+    main_block = sanitise_html(main_html, SCRAPE_REMAP) if main_html else ""
+    if len(main_text) < 200:
         paragraphs = [p.text(strip=True) for p in tree.css("p")]
-        joined = "\n".join(p for p in paragraphs if len(p) > 60)
-        if len(joined) > len(main_block):
-            main_block = joined
-
-    main_block = re.sub(r"\n{3,}", "\n\n", main_block)[:8000]
+        kept = [p for p in paragraphs if len(p) > 60]
+        if len("\n".join(kept)) > len(main_text):
+            main_block = "".join(f"<p>{html_escape(p)}</p>" for p in kept)
 
     return {"json_ld": json_ld, "meta": meta, "main_block": main_block}
 
@@ -251,9 +256,14 @@ def page_title(html: str) -> str:
 
 
 def best_description(candidates: dict[str, str]) -> str:
-    """The draft for the editor: the fullest candidate wins."""
-    return max(
-        (candidates.get("json_ld", ""), candidates.get("main_block", ""),
-         candidates.get("meta", "")),
-        key=len,
-    )
+    """The draft for the editor: the fullest candidate wins.
+
+    Compared on visible text, so the main block's markup does not count
+    for or against it. On a tie the main block wins because it is the
+    only candidate that keeps its headings and lists.
+    """
+    best = candidates.get("main_block", "")
+    for other in (candidates.get("json_ld", ""), candidates.get("meta", "")):
+        if len(text_only(other)) > len(text_only(best)):
+            best = other
+    return best

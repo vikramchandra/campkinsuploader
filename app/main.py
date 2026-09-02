@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from . import db, images, llm, sheet, woo
 from . import scraper
 from .config import EDITABLE_FIELDS, SETTINGS, save_settings
-from .sanitise import sanitise_html, text_only
+from .sanitise import SCRAPE_REMAP, sanitise_html, text_only
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -225,14 +225,37 @@ async def _scrape_one(session: scraper.BrowserSession, run: dict,
     db.update_row(row["id"], **updates)
 
 
+_BULLET = re.compile(r"^(?:[-*\u2022\u25aa\u25cf\u2013]|\d+[.)])\s+")
+
+
 def _text_to_html(text: str) -> str:
+    """Plain text from the sheet or JSON-LD becomes paragraphs. Lines that
+    start with a bullet or a number become a list, since that is how
+    suppliers write feature lists in plain text."""
     if not text:
         return ""
     if "<" in text and ">" in text:
         # JSON-LD descriptions are sometimes HTML already.
-        return sanitise_html(text)
-    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-    return "".join(f"<p>{html.escape(p)}</p>" for p in paragraphs)
+        return sanitise_html(text, SCRAPE_REMAP)
+    out: list[str] = []
+    in_list = False
+    for line in (part.strip() for part in text.split("\n")):
+        if not line:
+            continue
+        match = _BULLET.match(line)
+        if match:
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{html.escape(line[match.end():])}</li>")
+            continue
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+        out.append(f"<p>{html.escape(line)}</p>")
+    if in_list:
+        out.append("</ul>")
+    return "".join(out)
 
 
 # --- per-product review ---------------------------------------------------

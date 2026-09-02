@@ -471,41 +471,91 @@ function renderExtracted(extracted) {
       + "the description in, or write one.</p>";
     return;
   }
-  panel.innerHTML = blocks.map(([label, text], i) => `
+  // The main block arrives as HTML so its headings and lists survive;
+  // the other two are plain text. Both are shown and inserted as the
+  // same cleaned HTML the editor will hold.
+  const asHtml = blocks.map(([, text]) => toEditorHtml(text));
+  panel.innerHTML = blocks.map(([label], i) => `
     <div class="extract-block">
       <div class="extract-block__head">
         <span class="mono muted">${esc(label)}</span>
         <button class="btn btn--tool" data-insert="${i}">Insert</button>
       </div>
-      <div class="extract-block__text" data-text="${i}">${esc(text)}</div>
+      <div class="extract-block__text" data-text="${i}">${asHtml[i]}</div>
     </div>`).join("");
   panel.querySelectorAll("[data-insert]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const text = blocks[Number(btn.dataset.insert)][1];
-      const html = text.split(/\n+/).filter((p) => p.trim())
-        .map((p) => `<p>${esc(p.trim())}</p>`).join("");
-      $("editor").innerHTML += html;
+      $("editor").innerHTML += asHtml[Number(btn.dataset.insert)];
     });
   });
+}
+
+/* Plain text becomes paragraphs; lines that start with a bullet or a
+   number become a list. Mirrors _text_to_html on the server. */
+const BULLET = /^(?:[-*•▪●–]|\d+[.)])\s+/;
+
+function textToHtml(text) {
+  const out = [];
+  let inList = false;
+  for (const raw of text.split(/\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = BULLET.exec(line);
+    if (m) {
+      if (!inList) { out.push("<ul>"); inList = true; }
+      out.push(`<li>${esc(line.slice(m[0].length))}</li>`);
+      continue;
+    }
+    if (inList) { out.push("</ul>"); inList = false; }
+    out.push(`<p>${esc(line)}</p>`);
+  }
+  if (inList) out.push("</ul>");
+  return out.join("");
+}
+
+function toEditorHtml(text) {
+  if (/<[a-z][^>]*>/i.test(text)) {
+    const template = document.createElement("template");
+    template.innerHTML = text;
+    return cleanFragment(template.content, SCRAPE_REMAP);
+  }
+  return textToHtml(text);
 }
 
 /* Whitelist paste: manufacturer pages arrive as span soup with inline
    styles and tracking pixels. Same rule as the server applies again. */
 const PASTE_ALLOWED = new Set(["P", "BR", "UL", "OL", "LI", "STRONG", "EM",
-  "B", "I", "H2", "H3", "H4", "A"]);
+  "B", "I", "H1", "H2", "H3", "H4", "H5", "H6", "A",
+  "TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TH", "TD"]);
 const PASTE_DROP = new Set(["SCRIPT", "STYLE", "IFRAME", "NOSCRIPT", "SVG",
   "IMG", "VIDEO", "FORM", "BUTTON", "SELECT", "HEAD", "TITLE"]);
+// Applied to scraped copy only: a supplier page's h1 becomes h2, since
+// the shop page already has an h1. Headings typed or pasted stay as
+// they are. Same rule as SCRAPE_REMAP on the server.
+const SCRAPE_REMAP = { H1: "H2" };
+// Dropped containers whose text would otherwise run into the next one.
+const PASTE_BLOCK = new Set(["DIV", "SECTION", "ARTICLE", "ASIDE", "HEADER",
+  "FOOTER", "MAIN", "FIGURE", "FIGCAPTION", "BLOCKQUOTE", "DL", "DT", "DD",
+  "PRE", "ADDRESS", "DETAILS", "SUMMARY", "NAV"]);
+const BLOCK_SELECTOR = "p,ul,ol,li,h1,h2,h3,h4,h5,h6,table,div,section,"
+  + "article,blockquote,dl,pre";
 
-function cleanFragment(parent) {
+function cleanFragment(parent, remap = {}) {
   let out = "";
   for (const node of parent.childNodes) {
     if (node.nodeType === Node.TEXT_NODE) {
       out += esc(node.textContent);
     } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const tag = node.tagName;
+      const tag = remap[node.tagName] || node.tagName;
       if (PASTE_DROP.has(tag)) continue;
-      const inner = cleanFragment(node);
-      if (!PASTE_ALLOWED.has(tag)) { out += inner; continue; }
+      const inner = cleanFragment(node, remap);
+      if (!PASTE_ALLOWED.has(tag)) {
+        // A container holding only inline content is one paragraph.
+        const wrap = PASTE_BLOCK.has(tag) && inner.trim()
+          && !node.querySelector(BLOCK_SELECTOR);
+        out += wrap ? `<p>${inner}</p>` : inner;
+        continue;
+      }
       if (tag === "BR") { out += "<br>"; continue; }
       if (tag === "A") {
         const href = node.getAttribute("href") || "";
@@ -520,6 +570,138 @@ function cleanFragment(parent) {
   return out;
 }
 
+/* Editor toolbar. Buttons carry data-cmd (an execCommand name) and an
+   optional data-value; the style select applies formatBlock. Links use a
+   small inline box instead of a browser prompt, so the selection is kept
+   across the click and restored before the command runs. */
+let savedRange = null;
+
+function saveRange() {
+  const sel = window.getSelection();
+  if (sel.rangeCount && $("editor").contains(sel.anchorNode)) {
+    savedRange = sel.getRangeAt(0).cloneRange();
+  }
+}
+
+function restoreRange() {
+  $("editor").focus();
+  if (!savedRange) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(savedRange);
+}
+
+function linkAtSelection() {
+  const sel = window.getSelection();
+  let node = sel.rangeCount ? sel.anchorNode : null;
+  while (node && node !== $("editor")) {
+    if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "A") return node;
+    node = node.parentNode;
+  }
+  return null;
+}
+
+function currentBlockTag() {
+  const sel = window.getSelection();
+  let node = sel.rangeCount ? sel.anchorNode : null;
+  while (node && node !== $("editor")) {
+    if (node.nodeType === Node.ELEMENT_NODE
+        && /^(P|H[1-6]|LI)$/.test(node.tagName)) {
+      return node.tagName === "LI" ? "P" : node.tagName;
+    }
+    node = node.parentNode;
+  }
+  return "P";
+}
+
+function applyLink() {
+  let href = $("link-url").value.trim();
+  if (!href) return;
+  // The sanitiser drops anything that is not http(s); adding the scheme
+  // here saves the link from vanishing silently on save.
+  if (!/^https?:\/\//i.test(href)) href = `https://${href}`;
+  restoreRange();
+  const existing = linkAtSelection();
+  const sel = window.getSelection();
+  if (existing) {
+    existing.setAttribute("href", href);
+  } else if (!sel.rangeCount || sel.isCollapsed) {
+    // Nothing selected: insert the address itself as the link text.
+    document.execCommand("insertHTML", false,
+      `<a href="${esc(href)}">${esc(href)}</a>`);
+  } else {
+    document.execCommand("createLink", false, href);
+  }
+  closeLinkBox();
+}
+
+function removeLink() {
+  restoreRange();
+  const existing = linkAtSelection();
+  if (existing) {
+    // unlink needs the whole anchor selected to remove it cleanly.
+    const range = document.createRange();
+    range.selectNodeContents(existing);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  document.execCommand("unlink", false, null);
+  closeLinkBox();
+}
+
+function openLinkBox() {
+  saveRange();
+  const existing = linkAtSelection();
+  $("link-url").value = existing ? existing.getAttribute("href") || "" : "";
+  $("link-box").hidden = false;
+  $("link-url").focus();
+}
+
+function closeLinkBox() {
+  $("link-box").hidden = true;
+}
+
+function wireToolbar() {
+  const editor = $("editor");
+  // Without this, Enter after a heading starts a div rather than a
+  // paragraph, and the cleaner has to guess at the structure later.
+  document.execCommand("defaultParagraphSeparator", false, "p");
+  document.querySelectorAll("[data-cmd]").forEach((btn) => {
+    // mousedown, not click: by click time the editor has lost focus and
+    // with it the selection the command should apply to.
+    btn.addEventListener("mousedown", (event) => event.preventDefault());
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      editor.focus();
+      document.execCommand(btn.dataset.cmd, false, btn.dataset.value || null);
+      $("block-style").value = currentBlockTag();
+    });
+  });
+  const style = $("block-style");
+  style.addEventListener("mousedown", saveRange);
+  style.addEventListener("change", () => {
+    restoreRange();
+    document.execCommand("formatBlock", false, `<${style.value}>`);
+  });
+  const syncStyle = () => { style.value = currentBlockTag(); };
+  editor.addEventListener("keyup", syncStyle);
+  editor.addEventListener("mouseup", syncStyle);
+
+  $("link-open").addEventListener("mousedown", (event) => event.preventDefault());
+  $("link-open").addEventListener("click", (event) => {
+    event.preventDefault();
+    openLinkBox();
+  });
+  $("link-apply").addEventListener("click", applyLink);
+  $("link-remove").addEventListener("click", removeLink);
+  $("link-cancel").addEventListener("click", closeLinkBox);
+  $("link-url").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); applyLink(); }
+    if (event.key === "Escape") closeLinkBox();
+  });
+}
+
 function wirePaste() {
   $("editor").addEventListener("paste", (event) => {
     event.preventDefault();
@@ -530,9 +712,7 @@ function wirePaste() {
       template.innerHTML = html;
       clean = cleanFragment(template.content);
     } else {
-      const text = event.clipboardData.getData("text/plain");
-      clean = text.split(/\n+/).filter((p) => p.trim())
-        .map((p) => `<p>${esc(p.trim())}</p>`).join("");
+      clean = textToHtml(event.clipboardData.getData("text/plain"));
     }
     document.execCommand("insertHTML", false, clean);
   });
@@ -830,13 +1010,7 @@ function wire() {
   $("suffix").addEventListener("input", renderGrid);
   $("save-selection").addEventListener("click", () => saveSelection(false));
   $("save-continue").addEventListener("click", () => saveSelection(true));
-  document.querySelectorAll("[data-cmd]").forEach((btn) => {
-    btn.addEventListener("click", (event) => {
-      event.preventDefault();
-      $("editor").focus();
-      document.execCommand(btn.dataset.cmd, false, null);
-    });
-  });
+  wireToolbar();
   wirePaste();
 
   $("confirm-back").addEventListener("click", () => openReview(state.rowIndex));
