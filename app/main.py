@@ -437,7 +437,10 @@ async def _upload_row_now(row: dict, mode: str) -> dict:
 
     uploaded, failures = [], []
     for image in kept:
-        media_id = image["media_id"] or db.find_existing_media(image["sha256"])
+        # The row's own media_id is not trusted here: it may point at a file
+        # uploaded under an earlier name. The upload log is keyed on bytes
+        # and name together, so a rename forces a fresh upload.
+        media_id = db.find_existing_media(image["sha256"], image["filename"])
         if media_id:
             uploaded.append({"filename": image["filename"], "id": media_id,
                              "reused": True})

@@ -263,12 +263,17 @@ def set_image_media_id(row_id: int, sha256: str, media_id: int) -> None:
 
 # --- upload log (cross-run dedup) ----------------------------------------
 
-def find_existing_media(sha256: str) -> int | None:
-    """The same photo uploaded before is reused, not uploaded twice."""
+def find_existing_media(sha256: str, filename: str) -> int | None:
+    """The same photo uploaded before under the same name is reused.
+
+    The name is part of the match on purpose. The site stores the file
+    under the name it was uploaded with, so a renamed image has to go up
+    again or the new name never reaches the site.
+    """
     with connect() as conn:
         row = conn.execute(
-            "SELECT media_id FROM uploads WHERE sha256 = ? "
-            "ORDER BY id DESC LIMIT 1", (sha256,)
+            "SELECT media_id FROM uploads WHERE sha256 = ? AND filename = ? "
+            "ORDER BY id DESC LIMIT 1", (sha256, filename)
         ).fetchone()
         return int(row["media_id"]) if row else None
 
