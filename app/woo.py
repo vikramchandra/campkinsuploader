@@ -11,7 +11,9 @@ Assume the first real run finds problems here.
 
 from __future__ import annotations
 
+import html
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any
 
@@ -105,30 +107,95 @@ def find_by_sku(sku: str) -> dict[str, Any] | None:
     }
 
 
-def _find_term_ids(client: httpx.Client, endpoint: str,
-                   names: list[str]) -> tuple[list[int], list[str]]:
+def _same_term(api_name: str, wanted: str) -> bool:
+    # The API returns names HTML-encoded ("Scopes &amp; Monoculars"), so a
+    # sheet value with a plain ampersand never matched before this decode.
+    return html.unescape(api_name or "").strip().lower() == wanted.strip().lower()
+
+
+def _search_term(client: httpx.Client, endpoint: str,
+                 name: str) -> dict[str, Any] | None:
+    """Find one term by exact name, or None.
+
+    The search parameter is a substring match that punctuation breaks: a
+    query containing "&" returns nothing. Searching on the longest word
+    keeps the candidate list small without tripping on that. If that still
+    finds nothing, every term is paged through, since a site has hundreds
+    of categories at most.
+    """
+    auth = (SETTINGS.woo_key, SETTINGS.woo_secret)
+    words = [w for w in re.split(r"[^\w]+", name) if w]
+    query = max(words, key=len) if words else name
+    response = client.get(endpoint, params={"search": query, "per_page": 100},
+                          auth=auth)
+    if response.status_code != 200:
+        raise ApiError(_explain(response))
+    for term in response.json():
+        if _same_term(term.get("name", ""), name):
+            return term
+
+    page = 1
+    while True:
+        response = client.get(endpoint, params={"per_page": 100, "page": page},
+                              auth=auth)
+        if response.status_code != 200:
+            raise ApiError(_explain(response))
+        terms = response.json()
+        for term in terms:
+            if _same_term(term.get("name", ""), name):
+                return term
+        if len(terms) < 100:
+            return None
+        page += 1
+
+
+def _create_term(client: httpx.Client, endpoint: str, name: str) -> int:
+    response = client.post(endpoint, json={"name": name},
+                           auth=(SETTINGS.woo_key, SETTINGS.woo_secret))
+    if response.status_code in (200, 201):
+        return int(response.json()["id"])
+    # Two rows in one batch can race to create the same category; the
+    # second attempt comes back as term_exists with the winner's ID.
+    try:
+        body = response.json()
+    except Exception:
+        body = {}
+    if body.get("code") == "term_exists":
+        existing = (body.get("data") or {}).get("resource_id")
+        if existing:
+            return int(existing)
+    raise ApiError(_explain(response))
+
+
+def _find_term_ids(client: httpx.Client, endpoint: str, names: list[str],
+                   create: bool = False) -> tuple[list[int], list[str]]:
     """Match term names (categories, brands) to their IDs.
 
-    The product API takes IDs only. Unmatched names are returned as warnings
-    rather than created: a typo in the sheet must not mint a new category on
-    the live site.
+    The product API takes IDs only. With create=True a name that is not on
+    the site is created there first, so the product lands in the category
+    the sheet names rather than the site's default one. Without it the
+    name is left off with a warning.
     """
     ids: list[int] = []
     warnings: list[str] = []
     for name in names:
-        response = client.get(endpoint, params={"search": name, "per_page": 20},
-                              auth=(SETTINGS.woo_key, SETTINGS.woo_secret))
-        if response.status_code != 200:
-            warnings.append(f"Could not look up '{name}': {_explain(response)}")
+        try:
+            match = _search_term(client, endpoint, name)
+        except ApiError as exc:
+            warnings.append(f"Could not look up '{name}': {exc}")
             continue
-        match = next((t for t in response.json()
-                      if t.get("name", "").strip().lower() == name.lower()),
-                     None)
         if match:
             ids.append(int(match["id"]))
-        else:
+            continue
+        if not create:
             warnings.append(f"'{name}' does not exist on the site; left off "
                             "the product.")
+            continue
+        try:
+            ids.append(_create_term(client, endpoint, name))
+            warnings.append(f"Created the category '{name}' on the site.")
+        except ApiError as exc:
+            warnings.append(f"Could not create '{name}': {exc}")
     return ids, warnings
 
 
@@ -169,7 +236,8 @@ def create_product(name: str, slug: str, sku: str, regular_price: str,
     with httpx.Client(timeout=SETTINGS.request_timeout) as client:
         if categories:
             ids, category_warnings = _find_term_ids(
-                client, f"{SETTINGS.products_endpoint}/categories", categories)
+                client, f"{SETTINGS.products_endpoint}/categories", categories,
+                create=True)
             warnings.extend(category_warnings)
             if ids:
                 payload["categories"] = [{"id": i} for i in ids]
