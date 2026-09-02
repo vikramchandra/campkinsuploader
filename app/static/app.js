@@ -316,7 +316,11 @@ async function openReview(rowIndex) {
     state.product = data;
     data.images.forEach((img) => {
       img.keep = !!img.keep;
-      img._custom = !!img.filename; // A saved name is treated as hand-set.
+      img.custom_name = img.custom_name || "";
+      img.suffix = img.suffix || "";
+      img.alt_custom = !!img.alt_custom;
+      // A saved custom name means the switch was on when it was saved.
+      img.use_custom = !!img.custom_name;
     });
     show("review");
 
@@ -350,33 +354,47 @@ function keptImages() {
     .sort((a, b) => (a.position || 999) - (b.position || 999));
 }
 
-function derivedFilename(position, total) {
+/* Image naming.
+
+   prefix   the "Filename string" field, or the product name when empty
+   suffix   per image: the zero-padded position unless the user typed one
+   custom   per image, behind a switch: the whole filename, typed by hand
+
+   filename  custom ? custom.webp : prefix-suffix.webp   (all slugified)
+   alt text  custom ? custom : "prefix suffix"           (unless hand-set) */
+
+function filenamePrefix() {
+  return $("suffix").value.trim() || state.product.row.name;
+}
+
+function autoSuffix(position, total) {
   const width = Math.max(2, String(total).length);
-  const parts = [slugify(state.product.row.name)];
-  const suffix = $("suffix").value.trim();
-  if (suffix) parts.push(slugify(suffix));
-  parts.push(String(position).padStart(width, "0"));
-  return parts.join("-") + ".webp";
+  return String(position).padStart(width, "0");
+}
+
+function effectiveSuffix(img, total) {
+  return img.suffix || autoSuffix(img.position, total);
+}
+
+function computeName(img, total) {
+  if (img.use_custom) {
+    return `${slugify(img.custom_name)}.webp`;
+  }
+  return `${slugify(filenamePrefix())}-${slugify(effectiveSuffix(img, total))}.webp`;
+}
+
+function computeAlt(img, total) {
+  if (img.use_custom) return img.custom_name.trim();
+  return `${filenamePrefix()} ${effectiveSuffix(img, total)}`;
 }
 
 function renumber() {
   const kept = keptImages();
   kept.forEach((img, i) => {
     img.position = i + 1;
-    if (!img._custom) img.filename = derivedFilename(i + 1, kept.length);
-    if (!img.alt_text) {
-      img.alt_text = defaultAlt(img, i + 1);
-    }
+    img.filename = computeName(img, kept.length);
+    if (!img.alt_custom) img.alt_text = computeAlt(img, kept.length);
   });
-}
-
-function defaultAlt(img, position) {
-  const name = state.product.row.name;
-  const descriptor = (img.source_alt || "").trim();
-  if (descriptor && !name.toLowerCase().includes(descriptor.toLowerCase())) {
-    return `${name} - ${descriptor.slice(0, 60)}`;
-  }
-  return position === 1 ? name : `${name} - view ${position}`;
 }
 
 function renderGrid() {
@@ -392,10 +410,21 @@ function renderGrid() {
     const thumbTag = isThumb ? '<span class="frame__thumbtag">THUMBNAIL</span>' : "";
     const fields = img.keep ? `
       <div class="frame__fields">
-        <input class="field" data-filename="${index}" value="${esc(img.filename)}"
-               title="Filename on the site">
+        <label class="switch" title="Type the whole filename instead of a suffix">
+          <input type="checkbox" data-custom-toggle="${index}" ${img.use_custom ? "checked" : ""}>
+          <span class="switch__track"></span>
+          <span class="switch__label">Custom filename</span>
+        </label>
+        <input class="field" data-custom-name="${index}" value="${esc(img.custom_name)}"
+               placeholder="Custom filename" title="Whole filename, without .webp"
+               ${img.use_custom ? "" : "hidden"}>
+        <input class="field" data-suffix="${index}"
+               value="${esc(effectiveSuffix(img, kept.length))}"
+               placeholder="Suffix" title="Suffix after the filename string"
+               ${img.use_custom ? "hidden" : ""}>
         <input class="field" data-alt="${index}" value="${esc(img.alt_text)}"
                placeholder="Alt text" title="Alt text">
+        <div class="frame__name mono muted" data-name="${index}">${esc(img.filename)}</div>
         <label class="frame__radio">
           <input type="radio" name="thumb" data-thumb="${index}"
                  ${isThumb ? "checked" : ""}> Use as thumbnail
@@ -438,16 +467,58 @@ function renderGrid() {
       renderGrid();
     });
   });
-  grid.querySelectorAll("[data-filename]").forEach((el) => {
+  // Typing in a card must not redraw the grid, or the field loses focus.
+  // Only the derived name and alt text on that card are refreshed.
+  const refreshCard = (index) => {
+    renumber();
+    const img = state.product.images[index];
+    const nameEl = grid.querySelector(`[data-name="${index}"]`);
+    const altEl = grid.querySelector(`[data-alt="${index}"]`);
+    if (nameEl) nameEl.textContent = img.filename;
+    if (altEl && !img.alt_custom) altEl.value = img.alt_text;
+    const kept = keptImages();
+    $("filename-preview").textContent =
+      `${kept[0].filename}${kept.length > 1 ? ` … ${kept[kept.length - 1].filename}` : ""}`;
+  };
+  grid.querySelectorAll("[data-custom-toggle]").forEach((el) => {
+    el.addEventListener("change", () => {
+      const img = state.product.images[Number(el.dataset.customToggle)];
+      img.use_custom = el.checked;
+      renderGrid();
+      if (img.use_custom) {
+        const box = grid.querySelector(`[data-custom-name="${el.dataset.customToggle}"]`);
+        if (box) box.focus();
+      }
+    });
+  });
+  grid.querySelectorAll("[data-custom-name]").forEach((el) => {
     el.addEventListener("input", () => {
-      const img = state.product.images[Number(el.dataset.filename)];
-      img.filename = el.value.trim();
-      img._custom = true;
+      const index = Number(el.dataset.customName);
+      state.product.images[index].custom_name = el.value;
+      refreshCard(index);
+    });
+  });
+  grid.querySelectorAll("[data-suffix]").forEach((el) => {
+    el.addEventListener("input", () => {
+      const index = Number(el.dataset.suffix);
+      state.product.images[index].suffix = el.value.trim();
+      refreshCard(index);
+    });
+    // An emptied suffix goes back to the position number.
+    el.addEventListener("blur", () => {
+      const index = Number(el.dataset.suffix);
+      const img = state.product.images[index];
+      if (!img.suffix) el.value = effectiveSuffix(img, keptImages().length);
     });
   });
   grid.querySelectorAll("[data-alt]").forEach((el) => {
     el.addEventListener("input", () => {
-      state.product.images[Number(el.dataset.alt)].alt_text = el.value;
+      const index = Number(el.dataset.alt);
+      const img = state.product.images[index];
+      img.alt_text = el.value;
+      // Clearing the box hands the alt text back to the automatic rule.
+      img.alt_custom = el.value.trim() !== "";
+      if (!img.alt_custom) refreshCard(index);
     });
   });
   grid.querySelectorAll("[data-thumb]").forEach((el) => {
@@ -729,12 +800,19 @@ function collectSelection() {
       position: img.position || 0,
       filename: img.keep ? img.filename : "",
       alt_text: img.keep ? img.alt_text : "",
+      custom_name: img.keep && img.use_custom ? img.custom_name.trim() : "",
+      suffix: img.keep ? img.suffix : "",
+      alt_custom: img.keep && img.alt_custom,
     })),
   };
 }
 
 async function saveSelection(continueOn) {
   const kept = keptImages();
+  if (kept.some((i) => i.use_custom && !i.custom_name.trim())) {
+    toast("A custom filename is switched on but empty. Type a name or switch it off.", true);
+    return;
+  }
   const names = kept.map((i) => i.filename);
   if (new Set(names).size !== names.length) {
     toast("Two kept images share a filename. Make them unique.", true);

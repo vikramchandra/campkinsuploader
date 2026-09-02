@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS row_images (
     sha256 TEXT NOT NULL,
     filename TEXT DEFAULT '',
     alt_text TEXT DEFAULT '',
+    custom_name TEXT DEFAULT '',
+    suffix TEXT DEFAULT '',
+    alt_custom INTEGER NOT NULL DEFAULT 0,
     keep INTEGER NOT NULL DEFAULT 0,
     position INTEGER NOT NULL DEFAULT 0,
     orig_bytes INTEGER NOT NULL DEFAULT 0,
@@ -103,6 +106,16 @@ def init() -> None:
         if "ready" not in existing:
             conn.execute(
                 "ALTER TABLE rows ADD COLUMN ready INTEGER NOT NULL DEFAULT 0")
+        # Per-image naming controls added after the first release.
+        existing = {r["name"]
+                    for r in conn.execute("PRAGMA table_info(row_images)")}
+        for column, definition in (("custom_name", "TEXT DEFAULT ''"),
+                                   ("suffix", "TEXT DEFAULT ''"),
+                                   ("alt_custom",
+                                    "INTEGER NOT NULL DEFAULT 0")):
+            if column not in existing:
+                conn.execute(
+                    f"ALTER TABLE row_images ADD COLUMN {column} {definition}")
 
 
 # --- runs -----------------------------------------------------------------
@@ -246,9 +259,12 @@ def save_selection(row_id: int, suffix: str, description_html: str,
         for img in images:
             conn.execute(
                 "UPDATE row_images SET keep = ?, position = ?, filename = ?, "
-                "alt_text = ? WHERE row_id = ? AND sha256 = ?",
+                "alt_text = ?, custom_name = ?, suffix = ?, alt_custom = ? "
+                "WHERE row_id = ? AND sha256 = ?",
                 (1 if img.get("keep") else 0, int(img.get("position") or 0),
                  img.get("filename") or "", img.get("alt_text") or "",
+                 img.get("custom_name") or "", img.get("suffix") or "",
+                 1 if img.get("alt_custom") else 0,
                  row_id, img["sha256"]),
             )
 

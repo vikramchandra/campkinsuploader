@@ -292,6 +292,11 @@ class SelectionImage(BaseModel):
     position: int = 0
     filename: str = ""
     alt_text: str = ""
+    # custom_name set means the user typed the whole filename; otherwise
+    # it is prefix-suffix, where an empty suffix means the position number.
+    custom_name: str = ""
+    suffix: str = ""
+    alt_custom: bool = False
 
 
 class SelectionRequest(BaseModel):

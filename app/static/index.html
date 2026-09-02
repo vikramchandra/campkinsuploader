@@ -94,7 +94,8 @@
 
       <div class="row row--controls">
         <label class="lbl">Filename string
-          <input class="field" id="suffix" placeholder="e.g. black, kit, mk2">
+          <input class="field" id="suffix" placeholder="Product name unless set"
+                 title="Replaces the product name at the start of every image filename">
         </label>
         <p class="hint" id="filename-preview"></p>
         <span class="spacer"></span>
@@ -103,7 +104,10 @@
       </div>
 
       <p class="hint">Click an image to keep or drop it. Kept images are
-        numbered in the order you pick them. Choose one as the thumbnail.</p>
+        numbered in the order you pick them. Choose one as the thumbnail.
+        Under each kept image: the suffix (the number unless you type one),
+        the alt text, and the resulting filename. Switch on Custom filename
+        to type the whole name instead.</p>
       <div class="frames" id="review-grid"></div>
       <p class="hint is-hidden" id="review-failures"></p>
     </div>
