@@ -22,6 +22,7 @@ from playwright.async_api import BrowserContext, async_playwright
 from selectolax.parser import HTMLParser
 
 from .config import SETTINGS
+from .proxy import NO_PROXY, ProxyEndpoint, ProxyFailure
 from .sanitise import SCRAPE_REMAP, sanitise_html, text_only
 
 USER_AGENT = (
@@ -50,22 +51,26 @@ DESCRIPTION_SELECTORS = (
 class BrowserSession:
     """One Chromium for the whole batch; a fresh context per row."""
 
-    def __init__(self) -> None:
+    def __init__(self, proxy: ProxyEndpoint = NO_PROXY) -> None:
         self._playwright = None
         self._browser = None
+        self._proxy = proxy
 
     async def start(self) -> None:
         self._playwright = await async_playwright().start()
         # channel="chromium" runs full Chromium in its new headless mode.
         # The default headless shell is the old headless build, which bot
         # protection (Akamai, Cloudflare) recognises immediately.
-        launch_args = ["--disable-blink-features=AutomationControlled"]
+        launch = {
+            "headless": True,
+            "args": ["--disable-blink-features=AutomationControlled"],
+            **self._proxy.launch_kwargs(),
+        }
         try:
             self._browser = await self._playwright.chromium.launch(
-                headless=True, channel="chromium", args=launch_args)
+                channel="chromium", **launch)
         except Exception:
-            self._browser = await self._playwright.chromium.launch(
-                headless=True, args=launch_args)
+            self._browser = await self._playwright.chromium.launch(**launch)
 
     async def close(self) -> None:
         if self._browser is not None:
@@ -95,8 +100,14 @@ class BrowserSession:
             "{get: () => undefined})")
         page = await context.new_page()
         try:
-            await page.goto(url, wait_until="domcontentloaded",
-                            timeout=SETTINGS.request_timeout * 1000)
+            response = await page.goto(url, wait_until="domcontentloaded",
+                                       timeout=SETTINGS.request_timeout * 1000)
+            # A rejected proxy login on a plain http:// page does not raise;
+            # the browser just shows the proxy's 407 page as if it loaded.
+            if response is not None and response.status == 407:
+                raise ProxyFailure(
+                    "The proxy rejected the login or password (HTTP 407). "
+                    "Check them under Settings > Proxy.")
             # Lazy-loaded galleries need a scroll before they populate src.
             await page.evaluate(
                 "window.scrollTo(0, document.body.scrollHeight)")

@@ -288,6 +288,25 @@
     </div>
 
     <div class="panel">
+      <div class="panel__head"><h2>Proxy</h2></div>
+      <div class="grid-form">
+        <label class="lbl">Proxy provider
+          <select class="field" id="s-proxy_provider"></select></label>
+        <label class="lbl" id="proxy-username-lbl">
+          <span id="proxy-username-text">User id</span>
+          <input class="field mono" id="s-proxy_username"></label>
+        <label class="lbl" id="proxy-password-lbl">
+          <span id="proxy-password-text">Password</span>
+          <input class="field mono" id="s-proxy_password"></label>
+      </div>
+      <p class="hint" id="proxy-hint"></p>
+      <div class="row row--end">
+        <button class="btn" id="proxy-test">Test proxy</button>
+      </div>
+      <div class="log is-hidden" id="proxy-log"></div>
+    </div>
+
+    <div class="panel">
       <div class="panel__head"><h2>SEO meta keys</h2></div>
       <div class="grid-form">
         <label class="lbl">Meta title key

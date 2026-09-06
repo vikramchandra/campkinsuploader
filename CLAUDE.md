@@ -45,4 +45,9 @@ Windows, native. Python 3.11 or 3.12 in `.venv`. Build with `build.bat`
 ## Files that change most
 
 `app/scraper.py` is where supplier-specific extraction problems get fixed.
+`app/proxy.py` is where proxy providers are added: one `ProxyProvider`
+subclass per provider plus one entry in the `PROVIDERS` tuple, nothing else.
 Everything else should be stable.
+
+Unit tests live in `tests/`. Install `requirements-dev.txt` and run
+`python -m pytest tests`.

@@ -12,6 +12,9 @@
   "seo_desc_key": "",
   "store_weight_unit": "kg",
   "store_dimension_unit": "cm",
+  "proxy_provider": "none",
+  "proxy_username": "",
+  "proxy_password": "",
   "max_dimension": 1600,
   "webp_quality": 82,
   "request_timeout": 45

@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import db, images, llm, sheet, woo
-from . import scraper
+from . import proxy, scraper
 from .config import EDITABLE_FIELDS, SETTINGS, save_settings
 from .sanitise import SCRAPE_REMAP, sanitise_html, text_only
 
@@ -50,11 +50,17 @@ def get_settings() -> dict:
     data["llm_configured"] = SETTINGS.llm_configured
     data["default_model"] = llm.DEFAULT_MODEL
     data["output_dir_resolved"] = str(SETTINGS.output_dir)
+    # The dropdown is filled from this list before its value is set, so the
+    # catalogue travels with the settings rather than in a separate call.
+    data["proxy_providers"] = proxy.provider_catalogue()
     return data
 
 
 @app.post("/api/settings")
 def post_settings(updates: dict) -> dict:
+    key = updates.get("proxy_provider")
+    if key is not None and not proxy.is_known_provider(str(key).strip()):
+        raise HTTPException(400, f"Unknown proxy provider '{key}'.")
     save_settings(updates)
     return get_settings()
 
@@ -62,6 +68,26 @@ def post_settings(updates: dict) -> dict:
 @app.get("/api/connection")
 async def connection() -> dict:
     return await asyncio.to_thread(woo.check_connection)
+
+
+class ProxyCheck(BaseModel):
+    proxy_provider: str | None = None
+    proxy_username: str | None = None
+    proxy_password: str | None = None
+
+
+@app.post("/api/proxy/check")
+async def proxy_check(body: ProxyCheck | None = None) -> dict:
+    """Test what is typed on the Settings screen, before it is saved."""
+    body = body or ProxyCheck()
+
+    def typed(value: str | None, saved: str) -> str:
+        return saved if value is None else value
+
+    return await proxy.check_proxy(
+        typed(body.proxy_provider, SETTINGS.proxy_provider).strip(),
+        typed(body.proxy_username, SETTINGS.proxy_username),
+        typed(body.proxy_password, SETTINGS.proxy_password))
 
 
 # --- runs -----------------------------------------------------------------
@@ -155,16 +181,32 @@ async def _scrape_run(run_id: int, only_index: int | None = None) -> None:
     run = db.get_run(run_id)
     if not run:
         return
-    session = scraper.BrowserSession()
+
+    # One sticky proxy session per scrape. The timestamp means a rescrape
+    # gets a fresh IP instead of the one that just failed.
+    session_id = f"run{run_id}-{int(time.time())}"
+    try:
+        endpoint = proxy.active_proxy(session_id)
+    except proxy.ProxyConfigError as exc:
+        _fail_pending(run_id, only_index, str(exc))
+        return
+    if endpoint:
+        # Chromium never shows why a proxy said no; one plain request does.
+        check = await proxy.check_proxy(SETTINGS.proxy_provider,
+                                        SETTINGS.proxy_username,
+                                        SETTINGS.proxy_password)
+        if not check["ok"]:
+            _fail_pending(run_id, only_index, f"Proxy problem: {check['error']}")
+            return
+
+    session = scraper.BrowserSession(proxy=endpoint)
     try:
         await session.start()
     except Exception as exc:
         # Chromium missing entirely: fail every pending row with the reason
         # rather than leaving them stuck on 'pending' forever.
-        for row in db.get_rows(run_id):
-            if row["status"] == "pending":
-                db.set_row_status(row["id"], "failed",
-                                  f"Browser did not start: {exc}")
+        reason = (proxy.explain(exc) if endpoint else None) or _short(exc)
+        _fail_pending(run_id, only_index, f"Browser did not start: {reason}")
         return
     try:
         for row in db.get_rows(run_id):
@@ -172,18 +214,43 @@ async def _scrape_run(run_id: int, only_index: int | None = None) -> None:
                 continue
             if row["status"] != "pending":
                 continue
-            await _scrape_one(session, run, row)
+            try:
+                await _scrape_one(session, run, row, endpoint)
+            except proxy.ProxyFailure as exc:
+                # Every later row would wait out the timeout the same way.
+                db.set_row_status(row["id"], "failed", f"Proxy problem: {exc}")
+                _fail_pending(run_id, only_index, f"Scrape stopped: {exc}")
+                break
     finally:
         await session.close()
 
 
+def _fail_pending(run_id: int, only_index: int | None, message: str) -> None:
+    for row in db.get_rows(run_id):
+        if only_index is not None and row["row_index"] != only_index:
+            continue
+        if row["status"] == "pending":
+            db.set_row_status(row["id"], "failed", message)
+
+
+def _short(exc: Exception) -> str:
+    """Playwright appends a multi-line call log; the first line is the error."""
+    return str(exc).split("\n")[0].strip()
+
+
 async def _scrape_one(session: scraper.BrowserSession, run: dict,
-                      row: dict) -> None:
+                      row: dict, endpoint: proxy.ProxyEndpoint) -> None:
     db.set_row_status(row["id"], "scraping")
     try:
         page_html, context = await session.render(row["url"])
+    except proxy.ProxyFailure:
+        raise
     except Exception as exc:
-        db.set_row_status(row["id"], "failed", f"Could not load the page: {exc}")
+        reason = proxy.explain(exc) if endpoint else None
+        if reason:
+            raise proxy.ProxyFailure(reason) from exc
+        db.set_row_status(row["id"], "failed",
+                          f"Could not load the page: {_short(exc)}")
         return
 
     try:
@@ -193,7 +260,10 @@ async def _scrape_one(session: scraper.BrowserSession, run: dict,
         product_dir = (Path(run["dir"]) /
                        f"{row['row_index']:02d}-{images.slugify(row['name'])}")
         found, failures = await images.collect_all(
-            image_urls, row["url"], product_dir / "images", context)
+            image_urls, row["url"], product_dir / "images", context,
+            proxy=endpoint)
+    except proxy.ProxyFailure:
+        raise
     except Exception as exc:
         db.set_row_status(row["id"], "failed", f"Extraction failed: {exc}")
         return

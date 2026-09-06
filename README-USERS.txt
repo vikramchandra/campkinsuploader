@@ -26,6 +26,10 @@ Open Settings inside the app and fill in:
   WooCommerce > Settings > Products. The sheet always uses grams and
   millimetres; the app converts on upload.
 - OpenRouter API key, for generating SEO meta with AI.
+- Proxy (optional): pick a provider such as DataImpulse and enter the
+  login and password from that provider's dashboard. Press "Test proxy"
+  before saving. Use this when supplier sites block the scraper. Leave
+  the provider on "None" to scrape from this computer's own connection.
 
 If you were given a settings JSON file, use "Upload settings JSON" on
 the Settings screen instead of typing everything in. Keep that file

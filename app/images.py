@@ -20,6 +20,7 @@ import httpx
 from PIL import Image
 
 from .config import SETTINGS
+from .proxy import NO_PROXY, ProxyEndpoint, ProxyFailure, explain
 from .scraper import USER_AGENT
 
 Image.MAX_IMAGE_PIXELS = 120_000_000  # Guard against decompression bombs.
@@ -114,6 +115,11 @@ async def _fetch(client: httpx.AsyncClient, context, url: str,
         )
         response.raise_for_status()
         return response.content
+    except httpx.ProxyError as exc:
+        # The browser fallback goes through the same proxy and would fail
+        # the same way, so give up on this row now.
+        raise ProxyFailure(
+            explain(exc) or f"The proxy refused the connection: {exc}") from exc
     except Exception:
         if context is None:
             raise
@@ -127,27 +133,39 @@ async def _fetch(client: httpx.AsyncClient, context, url: str,
 
 async def collect_all(items: list[tuple[str, str]], referer: str,
                       images_dir: Path,
-                      context=None) -> tuple[list[Candidate], list[dict]]:
+                      context=None,
+                      proxy: ProxyEndpoint = NO_PROXY,
+                      ) -> tuple[list[Candidate], list[dict]]:
     """Download every candidate, dedupe by content, convert, sort by size.
 
     Returns candidates sorted descending by original byte size, plus a list
-    of failures with reasons so nothing is silently dropped.
+    of failures with reasons so nothing is silently dropped. A proxy failure
+    is raised instead: once the proxy is gone, every download fails.
     """
     images_dir.mkdir(parents=True, exist_ok=True)
     failures: list[dict] = []
     semaphore = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+    proxy_failures: list[ProxyFailure] = []
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(**proxy.client_kwargs()) as client:
         async def grab(url: str, alt: str):
             async with semaphore:
+                if proxy_failures:
+                    return url, alt, b"", "Skipped: the proxy failed"
                 try:
                     raw = await _fetch(client, context, url, referer)
                     return url, alt, raw, ""
+                except ProxyFailure as exc:
+                    proxy_failures.append(exc)
+                    return url, alt, b"", f"Download failed: {exc}"
                 except Exception as exc:
                     return url, alt, b"", f"Download failed: {exc}"
 
         downloads = await asyncio.gather(
             *(grab(url, alt) for url, alt in items))
+
+    if proxy_failures:
+        raise proxy_failures[0]
 
     results: list[Candidate] = []
     seen: set[str] = set()

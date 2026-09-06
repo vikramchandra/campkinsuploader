@@ -1000,18 +1000,82 @@ async function doUpload(mode) {
 const SETTING_IDS = ["site_url", "wp_user", "wp_app_password", "woo_key",
   "woo_secret", "output_root", "llm_model", "llm_api_key",
   "llm_system_prompt", "seo_title_key", "seo_desc_key",
-  "store_weight_unit", "store_dimension_unit"];
+  "store_weight_unit", "store_dimension_unit",
+  "proxy_provider", "proxy_username", "proxy_password"];
+
+// Provider list from the backend: key, label, field labels and hint.
+let proxyProviders = [];
 
 async function showSettings() {
   show("settings");
   try {
     const settings = await api("/api/settings");
+    // Options must exist before the select's value is set below.
+    fillProxyProviders(settings.proxy_providers);
     SETTING_IDS.forEach((key) => { $(`s-${key}`).value = settings[key] || ""; });
     if (!settings.llm_model) {
       $("s-llm_model").placeholder = settings.default_model || "";
     }
+    applyProxyProvider();
   } catch (err) {
     toast(err.message, true);
+  }
+}
+
+function fillProxyProviders(providers) {
+  proxyProviders = providers || [];
+  const select = $("s-proxy_provider");
+  select.innerHTML = "";
+  proxyProviders.forEach((provider) => {
+    const option = document.createElement("option");
+    option.value = provider.key;
+    option.textContent = provider.label;
+    select.appendChild(option);
+  });
+}
+
+function applyProxyProvider() {
+  const select = $("s-proxy_provider");
+  const provider = proxyProviders.find((p) => p.key === select.value)
+    || proxyProviders[0];
+  if (!provider) return;
+  select.value = provider.key;
+  $("proxy-username-text").textContent = provider.username_label;
+  $("s-proxy_username").placeholder = provider.username_placeholder || "";
+  $("proxy-password-text").textContent = provider.password_label;
+  $("proxy-hint").textContent = provider.hint || "";
+  $("proxy-username-lbl").classList.toggle("is-hidden", !provider.needs_credentials);
+  $("proxy-password-lbl").classList.toggle("is-hidden", !provider.needs_credentials);
+  $("proxy-log").className = "log is-hidden";
+}
+
+async function testProxy() {
+  const button = $("proxy-test");
+  const logEl = $("proxy-log");
+  const key = $("s-proxy_provider").value;
+  button.disabled = true;
+  button.innerHTML = '<span class="spin"></span>Testing';
+  try {
+    const result = await api("/api/proxy/check", { method: "POST", body: {
+      proxy_provider: key,
+      proxy_username: $("s-proxy_username").value,
+      proxy_password: $("s-proxy_password").value,
+    } });
+    let lines;
+    if (!result.ok) {
+      lines = [`${result.provider}: FAILED`, result.error];
+    } else if (key === "none") {
+      lines = ["No proxy.", `Your IP is ${result.ip}.`];
+    } else {
+      lines = [`${result.provider}: OK`, `The proxy IP is ${result.ip}.`];
+    }
+    logEl.textContent = lines.join("\n");
+    logEl.className = `log ${result.ok ? "is-good" : "is-bad"}`;
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Test proxy";
   }
 }
 
@@ -1103,6 +1167,8 @@ function wire() {
 
   $("settings-save").addEventListener("click", saveSettings);
   $("settings-test").addEventListener("click", () => testConnection($("settings-log")));
+  $("s-proxy_provider").addEventListener("change", applyProxyProvider);
+  $("proxy-test").addEventListener("click", testProxy);
   $("settings-export").addEventListener("click", downloadSettingsJson);
   $("settings-import").addEventListener("click", () => $("settings-file").click());
   $("settings-file").addEventListener("change", (event) => {

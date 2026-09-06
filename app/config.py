@@ -41,6 +41,7 @@ EDITABLE_FIELDS = (
     "output_root", "llm_api_key", "llm_model",
     "llm_system_prompt", "seo_title_key", "seo_desc_key",
     "store_weight_unit", "store_dimension_unit",
+    "proxy_provider", "proxy_username", "proxy_password",
 )
 
 
@@ -82,6 +83,11 @@ class Settings:
     # The sheet always uses grams and millimetres; uploads convert to these.
     store_weight_unit: str = "kg"
     store_dimension_unit: str = "cm"
+
+    # A key from proxy.PROVIDERS. "none" scrapes from this computer's IP.
+    proxy_provider: str = "none"
+    proxy_username: str = ""
+    proxy_password: str = ""
 
     max_dimension: int = 1600
     webp_quality: int = 82
@@ -143,6 +149,9 @@ def load_settings() -> Settings:
         seo_desc_key=pick("seo_desc_key"),
         store_weight_unit=pick("store_weight_unit", "kg"),
         store_dimension_unit=pick("store_dimension_unit", "cm"),
+        proxy_provider=pick("proxy_provider", "none"),
+        proxy_username=pick("proxy_username"),
+        proxy_password=pick("proxy_password"),
         max_dimension=int(data.get("max_dimension", 1600)),
         webp_quality=int(data.get("webp_quality", 82)),
         request_timeout=int(data.get("request_timeout", 45)),
